@@ -1,0 +1,7 @@
+src/
+test/
+.github/
+tsconfig*.json
+vitest.config.ts
+eslint.config.js
+Dockerfile
