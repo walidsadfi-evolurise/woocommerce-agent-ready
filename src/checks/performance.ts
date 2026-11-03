@@ -16,20 +16,18 @@ export const performanceCheck: Check = {
 
     const apiSamples: number[] = [];
     for (let i = 0; i < 3; i++) {
-      const r = await http.get(`/wp-json/wc/store/v1/products?per_page=10&search=a&_=${i}`);
+      const r = await http.get(`/wp-json/wc/store/v1/products?per_page=10&search=a`, { fresh: true });
       if (r.ok) apiSamples.push(r.durationMs);
     }
 
-    let pageSamples: number[] = [];
+    const pageSamples: number[] = [];
     const first = await http.get("/wp-json/wc/store/v1/products?per_page=1");
     const permalink = parseJson<Array<{ permalink?: string }>>(first.text)?.[0]?.permalink;
     if (permalink) {
       for (let i = 0; i < 3; i++) {
-        const r = await http.get(permalink);
+        const r = await http.get(permalink, { fresh: true });
         if (r.ok) pageSamples.push(r.durationMs);
       }
-    } else {
-      pageSamples = [];
     }
 
     let score = 0;

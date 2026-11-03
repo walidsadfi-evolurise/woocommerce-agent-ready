@@ -14,4 +14,5 @@ All notable changes to this project are documented here. The format follows
 - Terminal, JSON and self-contained HTML reports.
 - `--min-score` exit code for CI gates.
 - Library export (`runAudit`, `renderHtml`, `renderTerminal`).
-- Test suite with a configurable in-process mock store.
+- Test suite with a configurable in-process mock store and unit tests for the pure helpers.
+- Control probe in the MCP check so authentication walls do not count as MCP servers.

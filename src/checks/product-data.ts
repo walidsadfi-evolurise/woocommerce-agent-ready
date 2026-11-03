@@ -100,7 +100,10 @@ export const productDataCheck: Check = {
       message: `Sampled ${n} product(s) from the Store API. GTIN/EAN is not exposed by the Store API; the structured-data check covers it.`,
     });
 
-    const status = score >= 20 ? "pass" : score >= 13 ? "warn" : "fail";
+    const hasError = findings.some((f) => f.severity === "error");
+    const byScore = score >= 20 ? "pass" : score >= 13 ? "warn" : "fail";
+    // A field missing on most products is never a pass, whatever the total.
+    const status = hasError && byScore === "pass" ? "warn" : byScore;
     return { status, score: Math.min(score, 25), findings };
   },
 };

@@ -16,13 +16,17 @@ export interface MockConfig {
   withBrand: boolean;
   withAlt: boolean;
   jsonLd: "full" | "no-gtin" | "none";
-  robots: "none" | "open" | "block-all" | "block-ai" | "block-wpjson";
+  robots: "none" | "open" | "block-all" | "block-ai" | "block-wpjson" | "html" | "block-all-allow-products" | "block-training";
   mcp: "official" | "community" | "legacy-gone" | "none";
   cartToken: boolean;
   paymentMethods: string[];
   /** Artificial delay added to every response, in ms. */
   delayMs: number;
   exposeTotal: boolean;
+  /** Echo Access-Control-Allow-Origin when an Origin header is sent (WordPress default). */
+  cors: boolean;
+  /** Answer 401 to every REST route, like a "require auth for REST" plugin. */
+  authWallAll: boolean;
 }
 
 export const DEFAULT_MOCK: MockConfig = {
@@ -39,6 +43,8 @@ export const DEFAULT_MOCK: MockConfig = {
   paymentMethods: ["stripe", "cod"],
   delayMs: 0,
   exposeTotal: true,
+  cors: true,
+  authWallAll: false,
 };
 
 function product(i: number, cfg: MockConfig, base: string) {
@@ -87,6 +93,12 @@ function robots(cfg: MockConfig): string | null {
       return "User-agent: GPTBot\nDisallow: /\n\nUser-agent: ClaudeBot\nDisallow: /\n\nUser-agent: PerplexityBot\nDisallow: /\n\nUser-agent: *\nDisallow: /wp-admin/\n";
     case "block-wpjson":
       return "User-agent: *\nDisallow: /wp-json/\n";
+    case "html":
+      return "<!doctype html><html><body>Not found</body></html>";
+    case "block-all-allow-products":
+      return "User-agent: *\nDisallow: /\nAllow: /product/\nAllow: /wp-json/wc/store/\n";
+    case "block-training":
+      return "User-agent: GPTBot\nDisallow: /\n\nUser-agent: Google-Extended\nDisallow: /\n\nUser-agent: ChatGPT-User\nDisallow: /\n\nUser-agent: *\nDisallow: /wp-admin/\n";
   }
 }
 
@@ -120,6 +132,10 @@ export async function startMockStore(overrides: Partial<MockConfig> = {}): Promi
 
     const p = url.pathname;
 
+    if (config.authWallAll && p.startsWith("/wp-json")) {
+      return json(401, { code: "rest_not_logged_in", message: "You are not currently logged in." });
+    }
+
     if (p === "/wp-json/" || p === "/wp-json") {
       const namespaces = ["wp/v2", "wc/store/v1"];
       if (config.mcp === "official") namespaces.push("mcp");
@@ -132,7 +148,9 @@ export async function startMockStore(overrides: Partial<MockConfig> = {}): Promi
       if (config.storeApi === "html") return send(200, "<html>cached page</html>", { "content-type": "text/html" });
       const perPage = Math.min(Number(url.searchParams.get("per_page") ?? "10"), config.products);
       const list = Array.from({ length: perPage }, (_, i) => product(i + 1, config, base));
-      const headers: Record<string, string> = { "access-control-allow-origin": "*" };
+      const headers: Record<string, string> = {};
+      const origin = req.headers["origin"];
+      if (config.cors && typeof origin === "string") headers["access-control-allow-origin"] = origin;
       if (config.exposeTotal) headers["x-wp-total"] = String(config.products);
       return json(200, list, headers);
     }
@@ -147,6 +165,7 @@ export async function startMockStore(overrides: Partial<MockConfig> = {}): Promi
       if (config.mcp === "official") return json(401, { code: "rest_not_logged_in" });
       return json(404, { code: "rest_no_route" });
     }
+    if (p.startsWith("/wp-json/mcp/")) return json(404, { code: "rest_no_route" });
     if (p === "/wp-json/woocommerce/mcp") {
       if (config.mcp === "legacy-gone") return json(410, { code: "gone" });
       return json(404, { code: "rest_no_route" });
@@ -159,7 +178,8 @@ export async function startMockStore(overrides: Partial<MockConfig> = {}): Promi
     if (p === "/robots.txt") {
       const body = robots(config);
       if (body === null) return send(404, "not found", { "content-type": "text/plain" });
-      return send(200, body, { "content-type": "text/plain" });
+      const type = config.robots === "html" ? "text/html" : "text/plain";
+      return send(200, body, { "content-type": type });
     }
 
     const m = /^\/product\/product-(\d+)\/$/.exec(p);

@@ -94,7 +94,7 @@ export async function runAudit(
     toolVersion: pkg.version,
     score,
     max,
-    grade: gradeFor(Math.round((score / max) * 100)),
+    grade: gradeFor(max > 0 ? Math.round((score / max) * 100) : 0),
     checks: results,
     durationMs: performance.now() - started,
   };

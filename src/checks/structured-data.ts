@@ -48,7 +48,7 @@ export const structuredDataCheck: Check = {
   id: "structured-data",
   title: "Product structured data (schema.org)",
   why: "Shopping agents match products across the web by GTIN and read price and availability from schema.org markup.",
-  max: 15,
+  max: 20,
   async run({ http }) {
     const findings: Finding[] = [];
 
@@ -83,7 +83,7 @@ export const structuredDataCheck: Check = {
       return { status: "fail", score: 0, findings };
     }
 
-    let score = 4;
+    let score = 5;
     findings.push({ severity: "info", message: "schema.org Product markup present." });
 
     const field = (keys: string[], pts: number, label: string, fix: string) => {
@@ -96,7 +96,7 @@ export const structuredDataCheck: Check = {
       }
     };
 
-    field(["gtin", "gtin8", "gtin12", "gtin13", "gtin14", "isbn", "mpn"], 4, "GTIN / MPN",
+    field(["gtin", "gtin8", "gtin12", "gtin13", "gtin14", "isbn", "mpn"], 6, "GTIN / MPN",
       "Fill the GTIN field (WooCommerce 9.2+: Inventory > GTIN, UPC, EAN or ISBN) and make sure your SEO plugin outputs it.");
     field(["sku"], 2, "SKU in markup", "Expose the SKU in the Product schema.");
     field(["brand"], 1, "Brand", "Set a brand and output it as schema.org Brand.");
@@ -109,13 +109,13 @@ export const structuredDataCheck: Check = {
       const currency = nonEmpty(offer["priceCurrency"]);
       const availability = nonEmpty(offer["availability"]);
       if (price && currency) {
-        score += 2;
+        score += 3;
         findings.push({ severity: "info", message: "Offer price and currency: present." });
       } else {
         findings.push({ severity: "error", message: "Offer price or currency missing.", fix: "Output offers.price and offers.priceCurrency." });
       }
       if (availability) {
-        score += 1;
+        score += 2;
         findings.push({ severity: "info", message: "Offer availability: present." });
       } else {
         findings.push({ severity: "warning", message: "Offer availability missing.", fix: "Output offers.availability (schema.org/InStock etc.)." });
@@ -124,7 +124,9 @@ export const structuredDataCheck: Check = {
       findings.push({ severity: "error", message: "No Offer in Product schema.", fix: "Output an Offer with price, priceCurrency and availability." });
     }
 
-    const status = score >= 12 ? "pass" : score >= 7 ? "warn" : "fail";
-    return { status, score: Math.min(score, 15), findings };
+    const hasError = findings.some((f) => f.severity === "error");
+    const byScore = score >= 16 ? "pass" : score >= 9 ? "warn" : "fail";
+    const status = hasError && byScore === "pass" ? "warn" : byScore;
+    return { status, score: Math.min(score, 20), findings };
   },
 };

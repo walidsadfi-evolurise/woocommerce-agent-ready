@@ -45,12 +45,19 @@ describe("a well-configured store", () => {
     const report = await runAudit({ baseUrl: store.url, timeoutMs: 3000, sampleSize: 10 });
 
     expect(report.max).toBe(100);
-    expect(report.score).toBeGreaterThanOrEqual(90);
+    expect(report.score).toBe(100);
     expect(report.grade).toBe("A");
     for (const c of report.checks) {
       expect(c.status, `${c.id} should pass`).toBe("pass");
       expect(c.score).toBeLessThanOrEqual(c.max);
     }
+  });
+
+  it("shares cached GET responses across checks", async () => {
+    store = await startMockStore();
+    await runAudit({ baseUrl: store.url, timeoutMs: 3000, sampleSize: 5 });
+    const listCalls = store.requests.filter((r) => r === "GET /wp-json/wc/store/v1/products?per_page=1");
+    expect(listCalls).toHaveLength(1);
   });
 
   it("sends an identifiable User-Agent and never mutates the store", async () => {
@@ -79,6 +86,22 @@ describe("store-api", () => {
     expect(byId(report, "product-data").status).toBe("skip");
   });
 
+  it("fails when the Store API is behind an auth wall", async () => {
+    store = await startMockStore({ storeApi: "forbidden" });
+    const report = await runAudit({ baseUrl: store.url, timeoutMs: 3000 });
+    const c = byId(report, "store-api");
+    expect(c.status).toBe("fail");
+    expect(c.findings.some((f) => /403/.test(f.message))).toBe(true);
+  });
+
+  it("warns when CORS headers are stripped", async () => {
+    store = await startMockStore({ cors: false });
+    const report = await runAudit({ baseUrl: store.url, timeoutMs: 3000 });
+    const c = byId(report, "store-api");
+    expect(c.score).toBe(18);
+    expect(c.findings.some((f) => /Access-Control-Allow-Origin/.test(f.message) && f.severity === "warning")).toBe(true);
+  });
+
   it("warns when X-WP-Total is stripped", async () => {
     store = await startMockStore({ exposeTotal: false });
     const report = await runAudit({ baseUrl: store.url, timeoutMs: 3000 });
@@ -94,6 +117,7 @@ describe("product-data", () => {
     const report = await runAudit({ baseUrl: store.url, timeoutMs: 3000, sampleSize: 10 });
     const c = byId(report, "product-data");
     expect(c.score).toBe(25 - 5 - 4);
+    expect(c.status).toBe("warn");
     expect(c.findings.filter((f) => f.severity === "error").length).toBe(2);
   });
 
@@ -117,7 +141,8 @@ describe("structured-data", () => {
     store = await startMockStore({ jsonLd: "no-gtin" });
     const report = await runAudit({ baseUrl: store.url, timeoutMs: 3000 });
     const c = byId(report, "structured-data");
-    expect(c.score).toBe(15 - 4);
+    expect(c.score).toBe(20 - 6);
+    expect(c.status).toBe("warn");
     expect(c.findings.some((f) => /GTIN/.test(f.message) && f.severity === "error")).toBe(true);
   });
 });
@@ -139,14 +164,39 @@ describe("robots", () => {
     store = await startMockStore({ robots: "block-ai" });
     const report = await runAudit({ baseUrl: store.url, timeoutMs: 3000 });
     const c = byId(report, "robots");
-    expect(c.score).toBe(4);
-    expect(c.findings.some((f) => /GPTBot, ClaudeBot, PerplexityBot/.test(f.message))).toBe(true);
+    expect(c.score).toBe(6);
+    expect(c.findings.some((f) => /ClaudeBot, PerplexityBot/.test(f.message) && f.severity === "warning")).toBe(true);
+    // GPTBot is a training token, reported for information only.
+    expect(c.findings.some((f) => /GPTBot/.test(f.message) && f.severity === "info")).toBe(true);
   });
 
   it("warns when /wp-json/ is disallowed", async () => {
     store = await startMockStore({ robots: "block-wpjson" });
     const report = await runAudit({ baseUrl: store.url, timeoutMs: 3000 });
     expect(byId(report, "robots").score).toBe(8);
+  });
+
+  it("does not treat an HTML fallback page as an open robots.txt", async () => {
+    store = await startMockStore({ robots: "html" });
+    const report = await runAudit({ baseUrl: store.url, timeoutMs: 3000 });
+    const c = byId(report, "robots");
+    expect(c.status).toBe("warn");
+    expect(c.score).toBe(7);
+  });
+
+  it("honours Allow rules under a blanket Disallow", async () => {
+    store = await startMockStore({ robots: "block-all-allow-products" });
+    const report = await runAudit({ baseUrl: store.url, timeoutMs: 3000 });
+    expect(byId(report, "robots").score).toBe(10);
+  });
+
+  it("does not penalise training opt-outs or user-fetcher rules", async () => {
+    store = await startMockStore({ robots: "block-training" });
+    const report = await runAudit({ baseUrl: store.url, timeoutMs: 3000 });
+    const c = byId(report, "robots");
+    expect(c.score).toBe(10);
+    expect(c.findings.some((f) => /Training opt-outs/.test(f.message))).toBe(true);
+    expect(c.findings.some((f) => /ChatGPT-User/.test(f.message) && f.severity === "info")).toBe(true);
   });
 });
 
@@ -156,15 +206,24 @@ describe("mcp", () => {
     const report = await runAudit({ baseUrl: store.url, timeoutMs: 3000 });
     const c = byId(report, "mcp");
     expect(c.status).toBe("pass");
-    expect(c.score).toBe(10);
+    expect(c.score).toBe(5);
   });
 
-  it("detects a community server with a lower score", async () => {
+  it("detects a legacy server with a lower score", async () => {
     store = await startMockStore({ mcp: "community" });
     const report = await runAudit({ baseUrl: store.url, timeoutMs: 3000 });
     const c = byId(report, "mcp");
     expect(c.status).toBe("warn");
-    expect(c.score).toBe(6);
+    expect(c.score).toBe(3);
+  });
+
+  it("is not fooled by a site that answers 401 to every REST route", async () => {
+    store = await startMockStore({ authWallAll: true, mcp: "none" });
+    const report = await runAudit({ baseUrl: store.url, timeoutMs: 3000 });
+    const c = byId(report, "mcp");
+    expect(c.score).toBe(0);
+    expect(c.findings.some((f) => /authentication wall/.test(f.message))).toBe(true);
+    expect(byId(report, "store-api").status).toBe("fail");
   });
 
   it("reports no MCP and mentions the legacy 410", async () => {
@@ -181,6 +240,14 @@ describe("cart", () => {
     store = await startMockStore();
     const report = await runAudit({ baseUrl: store.url, timeoutMs: 3000 });
     expect(byId(report, "cart").score).toBe(10);
+  });
+
+  it("recognises WooPayments and PayPal Payments gateway ids", async () => {
+    store = await startMockStore({ paymentMethods: ["woocommerce_payments", "ppcp-gateway"] });
+    const report = await runAudit({ baseUrl: store.url, timeoutMs: 3000 });
+    const c = byId(report, "cart");
+    expect(c.score).toBe(10);
+    expect(c.findings.some((f) => /woocommerce_payments, ppcp-gateway/.test(f.message))).toBe(true);
   });
 
   it("warns without Cart-Token and without an API gateway", async () => {

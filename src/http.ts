@@ -1,5 +1,20 @@
 import type { Http, HttpResponse } from "./types.js";
 
+/** Extract a useful reason from an undici/fetch failure. */
+function describeError(err: unknown, timeoutMs: number): string {
+  if (err instanceof Error && err.name === "AbortError") return `timeout after ${timeoutMs} ms`;
+  if (err instanceof Error) {
+    const cause = (err as Error & { cause?: unknown }).cause;
+    if (cause && typeof cause === "object") {
+      const c = cause as { code?: string; message?: string };
+      if (c.code) return `${c.code}${c.message ? ` (${c.message})` : ""}`;
+      if (c.message) return c.message;
+    }
+    return err.message;
+  }
+  return String(err);
+}
+
 /**
  * Minimal HTTP client built on the global fetch (Node >= 20).
  *
@@ -7,9 +22,13 @@ import type { Http, HttpResponse } from "./types.js";
  * - Applies a hard timeout per request.
  * - Never throws: network failures are returned as a response with `error`.
  * - Measures wall-clock duration so checks can score latency.
+ * - Caches GET responses for the lifetime of the client so checks can share
+ *   the same product list or page without re-fetching. Pass `fresh: true`
+ *   to bypass the cache (latency sampling).
  */
 export function createHttp(baseUrl: string, timeoutMs: number, userAgent: string): Http {
   const base = new URL(baseUrl);
+  const cache = new Map<string, Promise<HttpResponse>>();
 
   async function request(
     method: "GET" | "POST",
@@ -43,12 +62,6 @@ export function createHttp(baseUrl: string, timeoutMs: number, userAgent: string
         url: res.url || url,
       };
     } catch (err) {
-      const message =
-        err instanceof Error && err.name === "AbortError"
-          ? `timeout after ${timeoutMs} ms`
-          : err instanceof Error
-            ? err.message
-            : String(err);
       return {
         status: 0,
         ok: false,
@@ -56,7 +69,7 @@ export function createHttp(baseUrl: string, timeoutMs: number, userAgent: string
         text: "",
         durationMs: performance.now() - started,
         url,
-        error: message,
+        error: describeError(err, timeoutMs),
       };
     } finally {
       clearTimeout(timer);
@@ -64,7 +77,17 @@ export function createHttp(baseUrl: string, timeoutMs: number, userAgent: string
   }
 
   return {
-    get: (path, init) => request("GET", path, undefined, init?.headers),
+    get(path, init) {
+      const headers = init?.headers ?? {};
+      if (init?.fresh) return request("GET", path, undefined, headers);
+      const key = `${path}|${JSON.stringify(headers)}`;
+      let pending = cache.get(key);
+      if (!pending) {
+        pending = request("GET", path, undefined, headers);
+        cache.set(key, pending);
+      }
+      return pending;
+    },
     post: (path, body, init) => request("POST", path, body, init?.headers),
   };
 }
@@ -85,4 +108,10 @@ export function median(values: number[]): number {
   const mid = Math.floor(sorted.length / 2);
   if (sorted.length % 2 === 1) return sorted[mid] ?? 0;
   return ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2;
+}
+
+/** True when a body that should be plain text or JSON is actually an HTML document. */
+export function looksLikeHtml(text: string): boolean {
+  const head = text.slice(0, 512).trimStart().toLowerCase();
+  return head.startsWith("<!doctype html") || head.startsWith("<html") || /<head[\s>]/.test(head);
 }

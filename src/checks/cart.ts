@@ -11,7 +11,15 @@ interface StoreCart {
 }
 
 /**
- * Agentic checkout (ACP from Stripe/OpenAI, UCP from Shopify/Google) sits on top
+ * Gateway ids (as exposed in Store API `payment_methods`) that have a
+ * server-side, tokenised API an agent-driven checkout can use:
+ * WooPayments (`woocommerce_payments`), Stripe, PayPal Payments (`ppcp-gateway`),
+ * Mollie, Adyen, Square, Checkout.com, PayPlug, Klarna, Alma, Amazon Pay.
+ */
+const API_GATEWAYS = /^(woocommerce_payments|stripe|ppcp|paypal|mollie|adyen|square|checkout_com|payplug|klarna|alma|amazon_payments)/i;
+
+/**
+ * Agentic checkout (ACP from Stripe/OpenAI, UCP led by Google with Shopify) sits on top
  * of a working headless cart. The Store API cart endpoints are the foundation;
  * if they are blocked or empty, no checkout protocol can be layered on.
  */
@@ -63,7 +71,7 @@ export const cartCheck: Check = {
     }
 
     const methods = cart.payment_methods ?? [];
-    const apiCapable = methods.filter((m) => /stripe|paypal|mollie|adyen|square|checkout_com|payplug/i.test(m));
+    const apiCapable = methods.filter((m) => API_GATEWAYS.test(m));
     if (methods.length === 0) {
       findings.push({
         severity: "warning",
@@ -81,7 +89,7 @@ export const cartCheck: Check = {
       findings.push({
         severity: "warning",
         message: `Payment methods found (${methods.join(", ")}) but none is a known API-first gateway.`,
-        fix: "Add Stripe (ACP reference implementation) or another gateway with a tokenised server-side API.",
+        fix: "Add WooPayments, Stripe, PayPal Payments or another gateway with a tokenised server-side API.",
       });
     }
 

@@ -15,7 +15,12 @@ export const storeApiCheck: Check = {
     const findings: Finding[] = [];
     let score = 0;
 
-    const res = await http.get("/wp-json/wc/store/v1/products?per_page=5");
+    // Warm the connection first so the latency figure below excludes DNS, TCP and TLS setup.
+    await http.get("/wp-json/", { fresh: true });
+    const res = await http.get("/wp-json/wc/store/v1/products?per_page=5", {
+      headers: { origin: "https://agent.example" },
+      fresh: true,
+    });
 
     if (res.error) {
       findings.push({
@@ -82,14 +87,15 @@ export const storeApiCheck: Check = {
       score += 2;
     } else {
       findings.push({
-        severity: "info",
-        message: "No Access-Control-Allow-Origin header. Browser-based agents will need a proxy.",
+        severity: "warning",
+        message: "No Access-Control-Allow-Origin header even with an Origin header sent. Browser-based agents will need a proxy.",
+        fix: "WordPress sends CORS headers for REST requests by default; a proxy or security plugin is stripping them.",
       });
     }
 
     if (res.durationMs <= 800) {
       score += 4;
-      findings.push({ severity: "info", message: `First Store API call answered in ${Math.round(res.durationMs)} ms.` });
+      findings.push({ severity: "info", message: `Store API answered in ${Math.round(res.durationMs)} ms on a warm connection.` });
     } else if (res.durationMs <= 2000) {
       score += 2;
       findings.push({

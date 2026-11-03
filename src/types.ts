@@ -76,7 +76,8 @@ export interface HttpResponse {
 }
 
 export interface Http {
-  get(path: string, init?: { headers?: Record<string, string> }): Promise<HttpResponse>;
+  /** GET with per-audit response caching. `fresh: true` bypasses the cache. */
+  get(path: string, init?: { headers?: Record<string, string>; fresh?: boolean }): Promise<HttpResponse>;
   post(
     path: string,
     body: unknown,
