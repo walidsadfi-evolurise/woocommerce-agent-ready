@@ -44,7 +44,7 @@
     "prepublishOnly": "npm run check && npm run build"
   },
   "dependencies": {
-    "commander": "^13.1.0"
+    "commander": "^15.1.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.26.0",
